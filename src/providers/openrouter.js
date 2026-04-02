@@ -1,3 +1,9 @@
+// Known Free Models:
+// meta-llama/llama-3.3-70b-instruct:free
+// google/gemma-3-27b-it:free
+// microsoft/phi-4:free
+// qwen/qwen3-235b-a22b:free
+
 export async function callOpenRouter(messages, tools, onChunk, apiKey, model, options = {}) {
   const isStreaming = options.stream !== false;
 
@@ -10,7 +16,7 @@ export async function callOpenRouter(messages, tools, onChunk, apiKey, model, op
       'X-Title': 'Forge'
     },
     body: JSON.stringify({
-      model: model || 'deepseek/deepseek-chat-v3-0324:free',
+      model: model || 'meta-llama/llama-3.3-70b-instruct:free',
       messages,
       tools: tools?.length ? tools : undefined,
       stream: isStreaming
@@ -24,9 +30,17 @@ export async function callOpenRouter(messages, tools, onChunk, apiKey, model, op
 
   if (!isStreaming) {
     const data = await response.json();
+    const message = data.choices[0].message;
+    
+    const parsedToolCalls = (message.tool_calls || []).map(tc => ({
+      id: tc.id,
+      name: tc.function.name,
+      args: JSON.parse(tc.function.arguments || '{}')
+    }));
+
     return {
-      content: data.choices[0].message.content,
-      toolCalls: data.choices[0].message.tool_calls,
+      content: message.content || '',
+      toolCalls: parsedToolCalls,
       usage: data.usage
     };
   }
@@ -82,12 +96,25 @@ export async function callOpenRouter(messages, tools, onChunk, apiKey, model, op
             usage = data.usage;
           }
         } catch (e) {
-          // If JSON is partial even within a line (unlikely with \n split but safe)
           buffer = line + '\n' + buffer;
         }
       }
     }
   }
 
-  return { content, toolCalls: toolCalls.filter(Boolean), usage };
+  const parsedToolCalls = toolCalls
+    .filter(tc => tc?.function?.name)
+    .map(tc => {
+      try {
+        return {
+          id: tc.id,
+          name: tc.function.name,
+          args: JSON.parse(tc.function.arguments || '{}')
+        };
+      } catch {
+        return { id: tc.id, name: tc.function.name, args: {} };
+      }
+    });
+
+  return { content, toolCalls: parsedToolCalls, usage };
 }

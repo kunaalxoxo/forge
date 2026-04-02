@@ -9,7 +9,7 @@ const schema = {
     type: 'object',
     default: {
       groq: { apiKey: '', model: 'llama-3.3-70b-versatile' },
-      openrouter: { apiKey: '', model: 'deepseek/deepseek-chat-v3-0324:free' },
+      openrouter: { apiKey: '', model: 'meta-llama/llama-3.3-70b-instruct:free' },
       together: { apiKey: '', model: 'meta-llama/Llama-3-70b-chat-hf' },
       mistral: { apiKey: '', model: 'mistral-small-latest' }
     }

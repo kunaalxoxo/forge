@@ -23,6 +23,13 @@ ${memory}
 ${context}`;
 }
 
+function trimHistoryForAPI(messages, maxMessages = 6) {
+  const systemMessages = messages.filter(m => m.role === 'system');
+  const nonSystem = messages.filter(m => m.role !== 'system');
+  const recent = nonSystem.slice(-maxMessages);
+  return [...systemMessages, ...recent];
+}
+
 export async function* runAgent(userMessage, conversationHistory, options = {}) {
   const { planMode = false } = options;
   
@@ -44,15 +51,17 @@ export async function* runAgent(userMessage, conversationHistory, options = {}) 
     turnCount++;
     
     let currentContent = '';
-    const options = { stream: true };
     const lastMessage = messages[messages.length - 1];
+    const providerOptions = { stream: true };
     if (lastMessage && lastMessage.role === 'tool') {
-      options.stream = false;
+      providerOptions.stream = false;
     }
 
-    const result = await callProvider(messages, planMode ? [] : TOOLS, (chunk) => {
+    const trimmedMessages = trimHistoryForAPI(messages);
+
+    const result = await callProvider(trimmedMessages, planMode ? [] : TOOLS, (chunk) => {
       currentContent += chunk;
-    }, options);
+    }, providerOptions);
 
     if (!result.toolCalls?.length && !result.content) {
       spinner.fail('No response received from AI. Try again.');
