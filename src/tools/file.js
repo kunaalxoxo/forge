@@ -19,17 +19,28 @@ export async function write_file({ path: filePath, content }) {
 }
 
 export async function list_files({ path: dirPath = '.', recursive = true }) {
+  const absoluteDirPath = path.resolve(process.cwd(), dirPath);
+  
   // Simple recursive readdir for now, ignoring .git and node_modules
   const getFiles = async (dir) => {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     const files = await Promise.all(entries.map((res) => {
-      const resPath = path.join(dir, res.name);
+      const fullPath = path.join(dir, res.name);
       if (res.name === '.git' || res.name === 'node_modules') return [];
-      return res.isDirectory() ? (recursive ? getFiles(resPath) : [resPath]) : resPath;
+      
+      if (res.isDirectory()) {
+        return recursive ? getFiles(fullPath) : [fullPath];
+      }
+      return fullPath;
     }));
     return Array.prototype.concat(...files);
   };
   
-  const allFiles = await getFiles(dirPath);
-  return allFiles.join('\n');
+  const allFiles = await getFiles(absoluteDirPath);
+  const relativeFiles = allFiles.map(f => {
+    const rel = path.relative(absoluteDirPath, f);
+    return rel.split(path.sep).join('/'); // Normalize to forward slashes
+  });
+  
+  return relativeFiles.filter(f => f !== '').join('\n');
 }
