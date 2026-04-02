@@ -124,6 +124,22 @@ export const TOOLS = [
 ];
 
 export async function executeTool(name, args) {
+  // Validate required params per tool
+  const required = {
+    read_file: ['path'],
+    write_file: ['path', 'content'],
+    str_replace_editor: ['file_path', 'old_str', 'new_str'],
+    bash_execute: ['command'],
+    list_files: [],
+    web_search: ['query'],
+    update_memory: ['pointers']
+  };
+
+  const missing = (required[name] || []).filter(p => !args?.[p]);
+  if (missing.length > 0) {
+    return `Error: Tool "${name}" called with missing required parameters: ${missing.join(', ')}. The AI must provide these parameters.`;
+  }
+
   switch (name) {
     case 'read_file': return await read_file(args);
     case 'write_file': return await write_file(args);

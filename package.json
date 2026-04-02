@@ -1,6 +1,6 @@
 {
   "name": "forge-ai",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "type": "module",
   "description": "AI Coding Agent CLI",
   "main": "bin/forge.js",
