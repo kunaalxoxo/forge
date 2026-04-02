@@ -1,4 +1,6 @@
-export async function callMistral(messages, tools, onChunk, apiKey, model) {
+export async function callMistral(messages, tools, onChunk, apiKey, model, options = {}) {
+  const isStreaming = options.stream !== false;
+
   const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -9,13 +11,22 @@ export async function callMistral(messages, tools, onChunk, apiKey, model) {
       model: model || 'mistral-small-latest',
       messages,
       tools: tools?.length ? tools : undefined,
-      stream: true
+      stream: isStreaming
     })
   });
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(error.error?.message || `Mistral API error: ${response.status}`);
+  }
+
+  if (!isStreaming) {
+    const data = await response.json();
+    return {
+      content: data.choices[0].message.content,
+      toolCalls: data.choices[0].message.tool_calls,
+      usage: data.usage
+    };
   }
 
   const reader = response.body.getReader();

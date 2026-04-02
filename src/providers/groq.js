@@ -1,4 +1,7 @@
-export async function callGroq(messages, tools, onChunk, apiKey, model) {
+export async function callGroq(messages, tools, onChunk, apiKey, model, options = {}) {
+  const hasTools = Array.isArray(tools) && tools.length > 0;
+  const isStreaming = options.stream !== false;
+  
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -7,15 +10,25 @@ export async function callGroq(messages, tools, onChunk, apiKey, model) {
     },
     body: JSON.stringify({
       model: model || 'llama-3.3-70b-versatile',
-      messages,
-      tools: tools?.length ? tools : undefined,
-      stream: true
+      messages: messages,
+      tools: hasTools ? tools : undefined,
+      tool_choice: hasTools ? 'auto' : undefined,
+      stream: isStreaming
     })
   });
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(error.error?.message || `Groq API error: ${response.status}`);
+  }
+
+  if (!isStreaming) {
+    const data = await response.json();
+    return {
+      content: data.choices[0].message.content,
+      toolCalls: data.choices[0].message.tool_calls,
+      usage: data.usage
+    };
   }
 
   const reader = response.body.getReader();
@@ -69,7 +82,6 @@ export async function callGroq(messages, tools, onChunk, apiKey, model) {
             usage = data.usage;
           }
         } catch (e) {
-          // If JSON is partial even within a line (unlikely with \n split but safe)
           buffer = line + '\n' + buffer;
         }
       }

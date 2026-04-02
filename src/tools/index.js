@@ -9,13 +9,13 @@ export const TOOLS = [
     type: 'function',
     function: {
       name: 'read_file',
-      description: 'Read a file with optional line ranges',
+      description: 'Read the contents of a file',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string' },
-          start_line: { type: 'number' },
-          end_line: { type: 'number' }
+          path: { type: 'string', description: 'Path to the file to read' },
+          start_line: { type: 'number', description: 'Optional: Start line number' },
+          end_line: { type: 'number', description: 'Optional: End line number' }
         },
         required: ['path']
       }
@@ -25,12 +25,12 @@ export const TOOLS = [
     type: 'function',
     function: {
       name: 'write_file',
-      description: 'Create or overwrite a file',
+      description: 'Create or overwrite a file with new content',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string' },
-          content: { type: 'string' }
+          path: { type: 'string', description: 'Path where the file should be saved' },
+          content: { type: 'string', description: 'Complete text content for the file' }
         },
         required: ['path', 'content']
       }
@@ -40,13 +40,13 @@ export const TOOLS = [
     type: 'function',
     function: {
       name: 'str_replace_editor',
-      description: 'Surgically replace a string in a file. Verification included.',
+      description: 'Surgically replace an exact string in a file with a new string',
       parameters: {
         type: 'object',
         properties: {
-          file_path: { type: 'string' },
-          old_str: { type: 'string' },
-          new_str: { type: 'string' }
+          file_path: { type: 'string', description: 'Path to the file to modify' },
+          old_str: { type: 'string', description: 'The exact literal string to find' },
+          new_str: { type: 'string', description: 'The string to replace it with' }
         },
         required: ['file_path', 'old_str', 'new_str']
       }
@@ -56,14 +56,14 @@ export const TOOLS = [
     type: 'function',
     function: {
       name: 'bash_execute',
-      description: 'Execute a terminal command with description',
+      description: 'Execute a terminal command with a clear description of its purpose',
       parameters: {
         type: 'object',
         properties: {
-          command: { type: 'string' },
-          description: { type: 'string' }
+          command: { type: 'string', description: 'The shell command to run' },
+          description: { type: 'string', description: 'Explanation of what this command does' }
         },
-        required: ['command']
+        required: ['command', 'description']
       }
     }
   },
@@ -71,12 +71,12 @@ export const TOOLS = [
     type: 'function',
     function: {
       name: 'web_search',
-      description: 'Search the web using DuckDuckGo',
+      description: 'Search the web using DuckDuckGo to find information',
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string' },
-          num_results: { type: 'number' }
+          query: { type: 'string', description: 'The search query string' },
+          num_results: { type: 'number', description: 'Number of results to return (default 5)' }
         },
         required: ['query']
       }
@@ -86,12 +86,12 @@ export const TOOLS = [
     type: 'function',
     function: {
       name: 'list_files',
-      description: 'List files in a directory',
+      description: 'List all files in a directory to understand project structure',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string' },
-          recursive: { type: 'boolean' }
+          path: { type: 'string', description: 'Directory path (defaults to current dir)' },
+          recursive: { type: 'boolean', description: 'Whether to list files in subdirectories' }
         }
       }
     }
@@ -100,18 +100,20 @@ export const TOOLS = [
     type: 'function',
     function: {
       name: 'update_memory',
-      description: 'Update MEMORY.md with new facts or pointers',
+      description: 'Update the persistent MEMORY.md file with new facts or project pointers',
       parameters: {
         type: 'object',
         properties: {
           pointers: {
             type: 'array',
+            description: 'Array of memory entries to add',
             items: {
               type: 'object',
               properties: {
-                category: { type: 'string', enum: ['ARCH', 'PREF', 'BUG', 'TODO', 'CONTEXT'] },
-                content: { type: 'string' }
-              }
+                category: { type: 'string', enum: ['ARCH', 'PREF', 'BUG', 'TODO', 'CONTEXT'], description: 'Category of the fact' },
+                content: { type: 'string', description: 'The factual statement (max 150 chars)' }
+              },
+              required: ['category', 'content']
             }
           }
         },

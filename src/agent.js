@@ -2,6 +2,7 @@ import { callProvider } from './providers/index.js';
 import { TOOLS, executeTool } from './tools/index.js';
 import { formatForPrompt, appendMemory } from './memory/index.js';
 import { loadContext } from './memory/context.js';
+import { spinner } from './ui/spinner.js';
 
 export async function buildSystemPrompt() {
   const memory = await formatForPrompt();
@@ -43,12 +44,28 @@ export async function* runAgent(userMessage, conversationHistory, options = {}) 
     turnCount++;
     
     let currentContent = '';
+    const isFirstTurn = turnCount === 1;
+    const isSummaryTurn = turnCount > 1 && !messages.some(m => m.role === 'tool'); // No tool results to process, just a summary
+    
+    // As per user request: "Also after all tool calls complete and we loop back, set stream: false for the follow-up call"
+    // Let's implement this by checking if we have tool results to process.
+    // Actually, simpler: if we just processed tool results in the previous turn, the next call is the summary.
+    
+    const options = { stream: true };
+    // If we just added tool results to the conversation, the next turn is a summary turn.
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage && lastMessage.role === 'tool') {
+      options.stream = false;
+    }
+
     const result = await callProvider(messages, planMode ? [] : TOOLS, (chunk) => {
       currentContent += chunk;
-    });
+    }, options);
 
-    // TEMPORARY DEBUG
-    console.error('DEBUG tool_calls:', JSON.stringify(result.toolCalls));
+    if (!result.toolCalls?.length && !result.content) {
+      spinner.fail('No response received from AI. Try again.');
+      break;
+    }
 
     if (result.content) {
       yield { type: 'text', content: result.content };

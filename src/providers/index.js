@@ -14,7 +14,7 @@ const PROVIDERS = {
 
 const FALLBACK_ORDER = ['groq', 'openrouter', 'together', 'mistral'];
 
-export async function callProvider(messages, tools, onChunk) {
+export async function callProvider(messages, tools, onChunk, options) {
   const config = getConfig();
   const startProvider = config.provider;
   const startIndex = FALLBACK_ORDER.indexOf(startProvider);
@@ -33,7 +33,7 @@ export async function callProvider(messages, tools, onChunk) {
     const model = config.providers[providerName].model;
 
     try {
-      return await fn(messages, tools, onChunk, apiKey, model);
+      return await fn(messages, tools, onChunk, apiKey, model, options);
     } catch (error) {
       console.warn(colors.error(`\n[${providerName}] error: ${error.message}. Trying fallback...`));
     }
