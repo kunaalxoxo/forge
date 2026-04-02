@@ -18,7 +18,7 @@ export async function callGroq(messages, tools, onChunk, apiKey, model, options 
     body.tool_choice = 'auto';
   }
 
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  let response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${actualApiKey}`,
@@ -28,8 +28,30 @@ export async function callGroq(messages, tools, onChunk, apiKey, model, options 
   });
 
   if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Groq API error ${response.status}: ${err}`);
+    const errText = await response.text();
+    const retryMatch = errText.match(/try again in ([\d.]+)s/);
+    if (response.status === 429 && retryMatch) {
+      const waitMs = (parseFloat(retryMatch[1]) + 1) * 1000;
+      console.error(`Rate limited. Waiting ${Math.ceil(waitMs/1000)}s...`);
+      await new Promise(r => setTimeout(r, waitMs));
+      
+      // Retry once
+      response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${actualApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+      
+      if (!response.ok) {
+        const finalErr = await response.text();
+        throw new Error(`Groq API error ${response.status} (after retry): ${finalErr}`);
+      }
+    } else {
+      throw new Error(`Groq API error ${response.status}: ${errText}`);
+    }
   }
 
   if (!isStreaming) {

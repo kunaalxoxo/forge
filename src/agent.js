@@ -3,6 +3,7 @@ import { TOOLS, executeTool } from './tools/index.js';
 import { formatForPrompt, appendMemory } from './memory/index.js';
 import { loadContext } from './memory/context.js';
 import { spinner } from './ui/spinner.js';
+import { colors } from './ui/colors.js';
 
 export async function buildSystemPrompt() {
   const memory = await formatForPrompt();
@@ -23,11 +24,26 @@ ${memory}
 ${context}`;
 }
 
-function trimHistoryForAPI(messages, maxMessages = 6) {
+function trimHistoryForAPI(messages, maxMessages = 4) {
   const systemMessages = messages.filter(m => m.role === 'system');
   const nonSystem = messages.filter(m => m.role !== 'system');
   const recent = nonSystem.slice(-maxMessages);
-  return [...systemMessages, ...recent];
+  const combined = [...systemMessages, ...recent];
+  
+  // Estimate tokens (chars / 4)
+  const charCount = JSON.stringify(combined).length;
+  if (charCount / 4 > 8000) {
+    process.stdout.write(colors.dim('\n⚠ Large context, using recent history only\n'));
+  }
+  
+  return combined;
+}
+
+function truncateToolResult(result, maxChars = 2000) {
+  if (typeof result === 'string' && result.length > maxChars) {
+    return result.slice(0, maxChars) + '\n... [truncated, ' + result.length + ' total chars]';
+  }
+  return result;
 }
 
 export async function* runAgent(userMessage, conversationHistory, options = {}) {
@@ -102,16 +118,18 @@ export async function* runAgent(userMessage, conversationHistory, options = {}) 
           fileChangesMade = true;
         }
 
+        const truncatedResult = truncateToolResult(toolResult);
+
         const toolResultMessage = {
           role: 'tool',
           tool_call_id: toolCall.id,
           name,
-          content: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult)
+          content: typeof truncatedResult === 'string' ? truncatedResult : JSON.stringify(truncatedResult)
         };
         
         conversationHistory.push(toolResultMessage);
         messages.push(toolResultMessage);
-        yield { type: 'tool_result', name, result: toolResult };
+        yield { type: 'tool_result', name, result: truncatedResult };
       } catch (error) {
         const errorMessage = {
           role: 'tool',
