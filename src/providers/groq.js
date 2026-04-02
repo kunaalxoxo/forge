@@ -1,42 +1,61 @@
+import { getConfig, getApiKey } from '../config.js';
+
 export async function callGroq(messages, tools, onChunk, apiKey, model, options = {}) {
-  const hasTools = Array.isArray(tools) && tools.length > 0;
+  const config = getConfig();
+  const actualApiKey = apiKey || getApiKey('groq');
+  const actualModel = model || config.providers?.groq?.model || 'llama-3.3-70b-versatile';
   const isStreaming = options.stream !== false;
-  
+
+  const body = {
+    model: actualModel,
+    messages,
+    stream: isStreaming,
+    max_tokens: 4096
+  };
+
+  if (tools && tools.length > 0) {
+    body.tools = tools;
+    body.tool_choice = 'auto';
+  }
+
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${apiKey}`,
+      'Authorization': `Bearer ${actualApiKey}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
-      model: model || 'llama-3.3-70b-versatile',
-      messages: messages,
-      tools: hasTools ? tools : undefined,
-      tool_choice: hasTools ? 'auto' : undefined,
-      stream: isStreaming
-    })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.error?.message || `Groq API error: ${response.status}`);
+    const err = await response.text();
+    throw new Error(`Groq API error ${response.status}: ${err}`);
   }
 
   if (!isStreaming) {
     const data = await response.json();
+    const message = data.choices[0].message;
+    
+    const parsedToolCalls = (message.tool_calls || []).map(tc => ({
+      id: tc.id,
+      name: tc.function.name,
+      args: JSON.parse(tc.function.arguments || '{}')
+    }));
+
     return {
-      content: data.choices[0].message.content,
-      toolCalls: data.choices[0].message.tool_calls,
+      content: message.content || '',
+      toolCalls: parsedToolCalls,
       usage: data.usage
     };
   }
 
+  // SSE parsing — the correct way
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let content = '';
-  let toolCalls = [];
-  let usage = null;
   let buffer = '';
+  let fullContent = '';
+  let toolCalls = [];
+  let usage = {};
 
   while (true) {
     const { done, value } = await reader.read();
@@ -44,49 +63,73 @@ export async function callGroq(messages, tools, onChunk, apiKey, model, options 
 
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
-    buffer = lines.pop(); // Keep partial line in buffer
+    
+    // Keep the last incomplete line in buffer
+    buffer = lines.pop();
 
     for (const line of lines) {
-      const trimmedLine = line.trim();
-      if (!trimmedLine || trimmedLine === 'data: [DONE]') continue;
+      const trimmed = line.trim();
+      if (!trimmed || trimmed === '') continue;
+      if (!trimmed.startsWith('data:')) continue;
+      
+      const data = trimmed.slice(5).trim();
+      if (data === '[DONE]') continue;
 
-      if (trimmedLine.startsWith('data: ')) {
-        const dataStr = trimmedLine.slice(6);
-        try {
-          const data = JSON.parse(dataStr);
-          if (!data.choices?.length) {
-            if (data.usage) usage = data.usage;
-            continue;
-          }
-          
-          const delta = data.choices[0].delta;
+      try {
+        const parsed = JSON.parse(data);
+        
+        // Handle usage
+        if (parsed.usage) usage = parsed.usage;
 
-          if (delta.content !== null && delta.content !== undefined) {
-            content += delta.content;
-            if (onChunk) onChunk(delta.content);
-          }
+        const delta = parsed.choices?.[0]?.delta;
+        if (!delta) continue;
 
-          if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              const idx = tc.index;
-              if (!toolCalls[idx]) {
-                toolCalls[idx] = { id: tc.id, type: 'function', function: { name: '', arguments: '' } };
-              }
-              if (tc.id) toolCalls[idx].id = tc.id;
-              if (tc.function?.name) toolCalls[idx].function.name += tc.function.name;
-              if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
-            }
-          }
-
-          if (data.usage) {
-            usage = data.usage;
-          }
-        } catch (e) {
-          buffer = line + '\n' + buffer;
+        // Handle text content
+        if (delta.content) {
+          fullContent += delta.content;
+          if (onChunk) onChunk(delta.content);
         }
+
+        // Handle tool calls - accumulate across chunks
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const idx = tc.index ?? 0;
+            if (!toolCalls[idx]) {
+              toolCalls[idx] = { 
+                id: tc.id || '', 
+                type: 'function',
+                function: { name: '', arguments: '' } 
+              }
+            }
+            if (tc.id) toolCalls[idx].id = tc.id;
+            if (tc.function?.name) toolCalls[idx].function.name += tc.function.name;
+            if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
+          }
+        }
+      } catch (e) {
+        // Skip malformed chunks silently
       }
     }
   }
 
-  return { content, toolCalls: toolCalls.filter(Boolean), usage };
+  // Parse tool call arguments from JSON strings
+  const parsedToolCalls = toolCalls
+    .filter(tc => tc?.function?.name)
+    .map(tc => {
+      try {
+        return {
+          id: tc.id,
+          name: tc.function.name,
+          args: JSON.parse(tc.function.arguments || '{}')
+        }
+      } catch {
+        return { id: tc.id, name: tc.function.name, args: {} }
+      }
+    });
+
+  return {
+    content: fullContent,
+    toolCalls: parsedToolCalls,
+    usage
+  }
 }

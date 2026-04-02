@@ -44,15 +44,7 @@ export async function* runAgent(userMessage, conversationHistory, options = {}) 
     turnCount++;
     
     let currentContent = '';
-    const isFirstTurn = turnCount === 1;
-    const isSummaryTurn = turnCount > 1 && !messages.some(m => m.role === 'tool'); // No tool results to process, just a summary
-    
-    // As per user request: "Also after all tool calls complete and we loop back, set stream: false for the follow-up call"
-    // Let's implement this by checking if we have tool results to process.
-    // Actually, simpler: if we just processed tool results in the previous turn, the next call is the summary.
-    
     const options = { stream: true };
-    // If we just added tool results to the conversation, the next turn is a summary turn.
     const lastMessage = messages[messages.length - 1];
     if (lastMessage && lastMessage.role === 'tool') {
       options.stream = false;
@@ -74,7 +66,14 @@ export async function* runAgent(userMessage, conversationHistory, options = {}) 
     const assistantMessage = { 
       role: 'assistant', 
       content: result.content || '',
-      tool_calls: result.toolCalls?.length ? result.toolCalls : undefined
+      tool_calls: result.toolCalls?.length ? result.toolCalls.map(tc => ({
+        id: tc.id,
+        type: 'function',
+        function: {
+          name: tc.name || tc.function?.name,
+          arguments: tc.args ? JSON.stringify(tc.args) : tc.function?.arguments
+        }
+      })) : undefined
     };
     
     conversationHistory.push(assistantMessage);
@@ -83,14 +82,8 @@ export async function* runAgent(userMessage, conversationHistory, options = {}) 
     if (!result.toolCalls?.length) break;
 
     for (const toolCall of result.toolCalls) {
-      const { name, arguments: argsJson } = toolCall.function;
-      let args = {};
-      try {
-        args = JSON.parse(argsJson);
-      } catch (e) {
-        yield { type: 'error', content: `Failed to parse tool arguments: ${argsJson}` };
-        continue;
-      }
+      const name = toolCall.name || toolCall.function?.name;
+      const args = toolCall.args || (toolCall.function?.arguments ? JSON.parse(toolCall.function.arguments) : {});
 
       yield { type: 'tool', name, args };
       
