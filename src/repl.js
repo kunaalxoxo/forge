@@ -16,6 +16,7 @@ const HELP_TEXT = `
   /clear          - Reset conversation history
   /model [name]   - Show or set current model
   /provider [name]- Show or switch provider
+  /provider status- Show status of all providers
   /memory         - Display MEMORY.md
   /memory clear   - Wipe MEMORY.md
   /plan           - Toggle plan mode
@@ -47,7 +48,18 @@ async function handleSlashCommand(command, rl) {
       }
       break;
     case '/provider':
-      if (args[0]) {
+      if (args[0] === 'status') {
+        const config = getConfig();
+        console.log(colors.bold('\n  Provider Status:'));
+        for (const p of listProviders()) {
+          const hasKey = !!config.providers[p].apiKey;
+          const status = hasKey ? colors.success('✓ configured') : colors.error('✗ no key');
+          const model = config.providers[p].model;
+          const isActive = config.provider === p ? colors.bold(' (active)') : '';
+          console.log(`  ${p.padEnd(12)} ${status.padEnd(20)} ${colors.dim(model)}${isActive}`);
+        }
+        console.log('');
+      } else if (args[0]) {
         if (listProviders().includes(args[0])) {
           setActiveProvider(args[0]);
           console.log(colors.success(`Active provider: ${args[0]}`));

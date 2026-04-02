@@ -7,7 +7,14 @@
 export async function callOpenRouter(messages, tools, onChunk, apiKey, model, options = {}) {
   const isStreaming = options.stream !== false;
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const body = {
+    model: model || 'meta-llama/llama-3.3-70b-instruct:free',
+    messages,
+    tools: tools?.length ? tools : undefined,
+    stream: isStreaming
+  };
+
+  let response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
@@ -15,17 +22,30 @@ export async function callOpenRouter(messages, tools, onChunk, apiKey, model, op
       'HTTP-Referer': 'https://github.com/kunaalxoxo/forge',
       'X-Title': 'Forge'
     },
-    body: JSON.stringify({
-      model: model || 'meta-llama/llama-3.3-70b-instruct:free',
-      messages,
-      tools: tools?.length ? tools : undefined,
-      stream: isStreaming
-    })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.error?.message || `OpenRouter API error: ${response.status}`);
+    if (response.status === 429) {
+      console.error(`[OpenRouter] Rate limited. Waiting 2s before retry...`);
+      await new Promise(r => setTimeout(r, 2000));
+      response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://github.com/kunaalxoxo/forge',
+          'X-Title': 'Forge'
+        },
+        body: JSON.stringify(body)
+      });
+    }
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const message = errorData.error?.message || `API error: ${response.status}`;
+      throw new Error(`STATUS_${response.status}: ${message}`);
+    }
   }
 
   if (!isStreaming) {

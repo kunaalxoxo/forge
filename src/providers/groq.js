@@ -28,14 +28,14 @@ export async function callGroq(messages, tools, onChunk, apiKey, model, options 
   });
 
   if (!response.ok) {
-    const errText = await response.text();
-    const retryMatch = errText.match(/try again in ([\d.]+)s/);
-    if (response.status === 429 && retryMatch) {
-      const waitMs = (parseFloat(retryMatch[1]) + 1) * 1000;
-      console.error(`Rate limited. Waiting ${Math.ceil(waitMs/1000)}s...`);
+    if (response.status === 429) {
+      const errText = await response.text();
+      const retryMatch = errText.match(/try again in ([\d.]+)s/);
+      const waitMs = retryMatch ? (parseFloat(retryMatch[1]) + 1) * 1000 : 2000;
+      
+      console.error(`[Groq] Rate limited. Waiting ${Math.ceil(waitMs/1000)}s before retry...`);
       await new Promise(r => setTimeout(r, waitMs));
       
-      // Retry once
       response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -47,10 +47,11 @@ export async function callGroq(messages, tools, onChunk, apiKey, model, options 
       
       if (!response.ok) {
         const finalErr = await response.text();
-        throw new Error(`Groq API error ${response.status} (after retry): ${finalErr}`);
+        throw new Error(`STATUS_${response.status}: ${finalErr}`);
       }
     } else {
-      throw new Error(`Groq API error ${response.status}: ${errText}`);
+      const errText = await response.text();
+      throw new Error(`STATUS_${response.status}: ${errText}`);
     }
   }
 

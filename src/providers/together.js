@@ -1,23 +1,41 @@
 export async function callTogether(messages, tools, onChunk, apiKey, model, options = {}) {
   const isStreaming = options.stream !== false;
 
-  const response = await fetch('https://api.together.xyz/v1/chat/completions', {
+  const body = {
+    model: model || 'meta-llama/Llama-3-70b-chat-hf',
+    messages,
+    tools: tools?.length ? tools : undefined,
+    stream: isStreaming
+  };
+
+  let response = await fetch('https://api.together.xyz/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
-      model: model || 'meta-llama/Llama-3-70b-chat-hf',
-      messages,
-      tools: tools?.length ? tools : undefined,
-      stream: isStreaming
-    })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.error?.message || `Together API error: ${response.status}`);
+    if (response.status === 429) {
+      console.error(`[Together] Rate limited. Waiting 2s before retry...`);
+      await new Promise(r => setTimeout(r, 2000));
+      response = await fetch('https://api.together.xyz/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+    }
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const message = errorData.error?.message || `API error: ${response.status}`;
+      throw new Error(`STATUS_${response.status}: ${message}`);
+    }
   }
 
   if (!isStreaming) {
