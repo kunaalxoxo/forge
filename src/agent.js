@@ -45,16 +45,21 @@ export async function* runAgent(userMessage, conversationHistory, options = {}) 
     let currentContent = '';
     const result = await callProvider(messages, planMode ? [] : TOOLS, (chunk) => {
       currentContent += chunk;
-      // We don't yield partial content here because we handle it in REPL
     });
 
-    yield { type: 'text', content: result.content };
+    // TEMPORARY DEBUG
+    console.error('DEBUG tool_calls:', JSON.stringify(result.toolCalls));
+
+    if (result.content) {
+      yield { type: 'text', content: result.content };
+    }
     
     const assistantMessage = { 
       role: 'assistant', 
-      content: result.content,
-      tool_calls: result.toolCalls 
+      content: result.content || '',
+      tool_calls: result.toolCalls?.length ? result.toolCalls : undefined
     };
+    
     conversationHistory.push(assistantMessage);
     messages.push(assistantMessage);
 
@@ -100,10 +105,6 @@ export async function* runAgent(userMessage, conversationHistory, options = {}) 
         yield { type: 'tool_result', name, result: `Error: ${error.message}` };
       }
     }
-  }
-
-  if (fileChangesMade && !conversationHistory.some(m => m.name === 'update_memory')) {
-    // Optional: Auto memory update if many files changed
   }
 
   yield { type: 'done' };

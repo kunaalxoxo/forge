@@ -25,34 +25,43 @@ export async function callOpenRouter(messages, tools, onChunk, apiKey, model) {
   let content = '';
   let toolCalls = [];
   let usage = null;
+  let buffer = '';
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
 
-    const chunk = decoder.decode(value, { stream: true });
-    const chunkLines = chunk.split('\n');
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop(); // Keep partial line in buffer
 
-    for (const line of chunkLines) {
-      if (line.startsWith('data: ')) {
-        const dataStr = line.slice(6).trim();
-        if (dataStr === '[DONE]') break;
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (!trimmedLine || trimmedLine === 'data: [DONE]') continue;
 
+      if (trimmedLine.startsWith('data: ')) {
+        const dataStr = trimmedLine.slice(6);
         try {
           const data = JSON.parse(dataStr);
+          if (!data.choices?.length) {
+            if (data.usage) usage = data.usage;
+            continue;
+          }
+          
           const delta = data.choices[0].delta;
 
-          if (delta.content) {
+          if (delta.content !== null && delta.content !== undefined) {
             content += delta.content;
             if (onChunk) onChunk(delta.content);
           }
 
           if (delta.tool_calls) {
             for (const tc of delta.tool_calls) {
-              const idx = tc.index || 0;
+              const idx = tc.index;
               if (!toolCalls[idx]) {
                 toolCalls[idx] = { id: tc.id, type: 'function', function: { name: '', arguments: '' } };
               }
+              if (tc.id) toolCalls[idx].id = tc.id;
               if (tc.function?.name) toolCalls[idx].function.name += tc.function.name;
               if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
             }
@@ -62,7 +71,8 @@ export async function callOpenRouter(messages, tools, onChunk, apiKey, model) {
             usage = data.usage;
           }
         } catch (e) {
-          // Ignore
+          // If JSON is partial even within a line (unlikely with \n split but safe)
+          buffer = line + '\n' + buffer;
         }
       }
     }

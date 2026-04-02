@@ -23,35 +23,45 @@ export async function callGroq(messages, tools, onChunk, apiKey, model) {
   let content = '';
   let toolCalls = [];
   let usage = null;
+  let buffer = '';
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
 
-    const chunk = decoder.decode(value, { stream: true });
-    const lines = chunk.split('\n');
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop(); // Keep partial line in buffer
 
     for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const dataStr = line.slice(6);
-        if (dataStr === '[DONE]') break;
+      const trimmedLine = line.trim();
+      if (!trimmedLine || trimmedLine === 'data: [DONE]') continue;
 
+      if (trimmedLine.startsWith('data: ')) {
+        const dataStr = trimmedLine.slice(6);
         try {
           const data = JSON.parse(dataStr);
+          if (!data.choices?.length) {
+            if (data.usage) usage = data.usage;
+            continue;
+          }
+          
           const delta = data.choices[0].delta;
 
-          if (delta.content) {
+          if (delta.content !== null && delta.content !== undefined) {
             content += delta.content;
             if (onChunk) onChunk(delta.content);
           }
 
           if (delta.tool_calls) {
             for (const tc of delta.tool_calls) {
-              if (!toolCalls[tc.index]) {
-                toolCalls[tc.index] = { id: tc.id, type: 'function', function: { name: '', arguments: '' } };
+              const idx = tc.index;
+              if (!toolCalls[idx]) {
+                toolCalls[idx] = { id: tc.id, type: 'function', function: { name: '', arguments: '' } };
               }
-              if (tc.function?.name) toolCalls[tc.index].function.name += tc.function.name;
-              if (tc.function?.arguments) toolCalls[tc.index].function.arguments += tc.function.arguments;
+              if (tc.id) toolCalls[idx].id = tc.id;
+              if (tc.function?.name) toolCalls[idx].function.name += tc.function.name;
+              if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
             }
           }
 
@@ -59,7 +69,8 @@ export async function callGroq(messages, tools, onChunk, apiKey, model) {
             usage = data.usage;
           }
         } catch (e) {
-          // Ignore parse errors for partial chunks
+          // If JSON is partial even within a line (unlikely with \n split but safe)
+          buffer = line + '\n' + buffer;
         }
       }
     }
