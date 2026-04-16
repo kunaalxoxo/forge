@@ -1,41 +1,36 @@
-# ⚒ Forge
+# forge
 
-Forge is a production-grade, offline-capable AI coding CLI designed to be fast, lightweight, and efficient.
+Lightweight open-source AI coding CLI (Node.js, ESM, low-memory friendly).
 
 ## Features
-- Multi-provider support (Groq, OpenRouter, Together, Mistral)
-- Automatic fallback chain
-- Interactive REPL with colored output
-- Surgical file editing with unified diffs
-- Smart memory system (MEMORY.md)
-- Context awareness (AI.md hierarchy)
 
-## Installation
+- Multi-provider backend with fallback: Groq, OpenRouter, Together, Mistral, Ollama
+- Readline + chalk terminal UX
+- Tool calling (`tool_choice: "auto"`) with streaming responses
+- File tools + surgical `str_replace_editor`
+- Multi-format edit fallback via `edit_file` (`str_replace -> udiff -> rewrite`)
+- Shell tool approval gate with Windows `cmd /c` support
+- MEMORY.md pointer memory with `/sleep` autoDream consolidation
+- Context hierarchy from `GEMINI.md` and `FORGE.md` (cwd upward)
+- Session checkpointing and `/undo`
+- Slash commands: `/help /clear /model /provider /provider status /memory /sleep /plan /architect /add /daemon /offline /student /session /cost /undo`
+
+## Install
+
 ```bash
-npm install -g .
+npm install
+npm link
 ```
 
-## Setup
-Run the setup wizard to configure your API keys:
+## First-run setup
+
 ```bash
 forge setup
+forge
 ```
 
-## Usage
-- **Interactive REPL:** `forge`
-- **Single Prompt:** `forge "fix the bug in src/index.js"`
-- **With Context:** `forge --file src/config.js "summarize this"`
+## Notes
 
-## Slash Commands
-- `/help` - Show all commands
-- `/plan` - Toggle plan mode
-- `/memory` - View or clear memory
-- `/session` - Save/load session history
-- `/sleep` - Consolidate memory
-
-## Providers
-Forge uses free-tier APIs from:
-- [Groq](https://console.groq.com)
-- [OpenRouter](https://openrouter.ai/keys)
-- [Mistral AI](https://console.mistral.ai)
-- [Together AI](https://api.together.xyz)
+- Defaults are tuned for student mode and low-end hardware.
+- `/offline` switches provider to local Ollama at `http://localhost:11434`.
+- Auto-commit runs after edit tools when Git changes exist.

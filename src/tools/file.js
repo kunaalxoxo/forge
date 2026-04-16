@@ -1,46 +1,46 @@
 import fs from 'fs/promises';
 import path from 'path';
 
+function resolveInCwd(inputPath = '.') {
+  return path.resolve(process.cwd(), inputPath);
+}
+
 export async function read_file({ path: filePath, start_line, end_line }) {
-  const content = await fs.readFile(filePath, 'utf-8');
+  const fullPath = resolveInCwd(filePath);
+  const content = await fs.readFile(fullPath, 'utf8');
   const lines = content.split('\n');
-  
-  const start = start_line ? parseInt(start_line) - 1 : 0;
-  const end = end_line ? parseInt(end_line) : lines.length;
-  
-  const slicedLines = lines.slice(start, end);
-  return slicedLines.map((line, i) => `${start + i + 1} | ${line}`).join('\n');
+  const start = start_line ? Math.max(Number(start_line) - 1, 0) : 0;
+  const end = end_line ? Math.min(Number(end_line), lines.length) : lines.length;
+  return lines.slice(start, end).map((line, i) => `${start + i + 1} | ${line}`).join('\n');
 }
 
 export async function write_file({ path: filePath, content }) {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, content, 'utf-8');
-  return `Successfully wrote ${content.length} characters to ${filePath}`;
+  const fullPath = resolveInCwd(filePath);
+  await fs.mkdir(path.dirname(fullPath), { recursive: true });
+  await fs.writeFile(fullPath, content, 'utf8');
+  return `Wrote ${content.length} chars to ${fullPath}`;
 }
 
 export async function list_files({ path: dirPath = '.', recursive = true }) {
-  const absoluteDirPath = path.resolve(process.cwd(), dirPath);
-  
-  // Simple recursive readdir for now, ignoring .git and node_modules
-  const getFiles = async (dir) => {
+  const root = resolveInCwd(dirPath);
+  const skip = new Set(['.git', 'node_modules']);
+
+  async function walk(dir) {
     const entries = await fs.readdir(dir, { withFileTypes: true });
-    const files = await Promise.all(entries.map((res) => {
-      const fullPath = path.join(dir, res.name);
-      if (res.name === '.git' || res.name === 'node_modules') return [];
-      
-      if (res.isDirectory()) {
-        return recursive ? getFiles(fullPath) : [fullPath];
+    const out = [];
+    for (const entry of entries) {
+      if (skip.has(entry.name)) continue;
+      const abs = path.join(dir, entry.name);
+      const rel = path.relative(root, abs).split(path.sep).join('/');
+      if (entry.isDirectory()) {
+        out.push(`${rel}/`);
+        if (recursive) out.push(...await walk(abs));
+      } else {
+        out.push(rel);
       }
-      return fullPath;
-    }));
-    return Array.prototype.concat(...files);
-  };
-  
-  const allFiles = await getFiles(absoluteDirPath);
-  const relativeFiles = allFiles.map(f => {
-    const rel = path.relative(absoluteDirPath, f);
-    return rel.split(path.sep).join('/'); // Normalize to forward slashes
-  });
-  
-  return relativeFiles.filter(f => f !== '').join('\n');
+    }
+    return out;
+  }
+
+  return (await walk(root)).join('\n');
 }

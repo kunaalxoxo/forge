@@ -1,7 +1,9 @@
 import { read_file, write_file, list_files } from './file.js';
-import { str_replace_editor } from './editor.js';
+import { str_replace_editor, edit_file } from './editor.js';
 import { bash_execute } from './shell.js';
 import { web_search } from './search.js';
+import { build_repo_map } from './repomap.js';
+import { run_validators } from './validator.js';
 import { updateMemory } from '../memory/index.js';
 
 export const TOOLS = [
@@ -9,45 +11,26 @@ export const TOOLS = [
     type: 'function',
     function: {
       name: 'read_file',
-      description: 'Read the contents of a file',
-      parameters: {
-        type: 'object',
-        properties: {
-          path: { type: 'string', description: 'Path to the file to read' },
-          start_line: { type: 'number', description: 'Optional: Start line number' },
-          end_line: { type: 'number', description: 'Optional: End line number' }
-        },
-        required: ['path']
-      }
+      description: 'Read file content with optional line range.',
+      parameters: { type: 'object', properties: { path: { type: 'string' }, start_line: { type: 'number' }, end_line: { type: 'number' } }, required: ['path'] }
     }
   },
   {
     type: 'function',
     function: {
       name: 'write_file',
-      description: 'Create or overwrite a file with new content',
-      parameters: {
-        type: 'object',
-        properties: {
-          path: { type: 'string', description: 'Path where the file should be saved' },
-          content: { type: 'string', description: 'Complete text content for the file' }
-        },
-        required: ['path', 'content']
-      }
+      description: 'Write a full file.',
+      parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] }
     }
   },
   {
     type: 'function',
     function: {
       name: 'str_replace_editor',
-      description: 'Surgically replace an exact string in a file with a new string',
+      description: 'Exact one-occurrence replacement editor.',
       parameters: {
         type: 'object',
-        properties: {
-          file_path: { type: 'string', description: 'Path to the file to modify' },
-          old_str: { type: 'string', description: 'The exact literal string to find' },
-          new_str: { type: 'string', description: 'The string to replace it with' }
-        },
+        properties: { file_path: { type: 'string' }, old_str: { type: 'string' }, new_str: { type: 'string' } },
         required: ['file_path', 'old_str', 'new_str']
       }
     }
@@ -55,64 +38,74 @@ export const TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'bash_execute',
-      description: 'Execute a terminal command with a clear description of its purpose',
+      name: 'edit_file',
+      description: 'Edit with fallback: str_replace -> udiff -> rewrite.',
       parameters: {
         type: 'object',
         properties: {
-          command: { type: 'string', description: 'The shell command to run' },
-          description: { type: 'string', description: 'Explanation of what this command does' }
+          file_path: { type: 'string' },
+          old_str: { type: 'string' },
+          new_str: { type: 'string' },
+          patch: { type: 'string' },
+          content: { type: 'string' }
         },
-        required: ['command', 'description']
+        required: ['file_path']
       }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'bash_execute',
+      description: 'Run shell command with approval gate.',
+      parameters: { type: 'object', properties: { command: { type: 'string' }, description: { type: 'string' } }, required: ['command'] }
     }
   },
   {
     type: 'function',
     function: {
       name: 'web_search',
-      description: 'Search the web using DuckDuckGo to find information',
-      parameters: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'The search query string' },
-          num_results: { type: 'number', description: 'Number of results to return (default 5)' }
-        },
-        required: ['query']
-      }
+      description: 'Search web using DuckDuckGo Lite.',
+      parameters: { type: 'object', properties: { query: { type: 'string' }, num_results: { type: 'number' } }, required: ['query'] }
     }
   },
   {
     type: 'function',
     function: {
       name: 'list_files',
-      description: 'List all files in a directory to understand project structure',
-      parameters: {
-        type: 'object',
-        properties: {
-          path: { type: 'string', description: 'Directory path (defaults to current dir)' },
-          recursive: { type: 'boolean', description: 'Whether to list files in subdirectories' }
-        }
-      }
+      description: 'List files in directory.',
+      parameters: { type: 'object', properties: { path: { type: 'string' }, recursive: { type: 'boolean' } } }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'repo_map',
+      description: 'Create compact repository map with signatures.',
+      parameters: { type: 'object', properties: { path: { type: 'string' }, includeSignatures: { type: 'boolean' }, maxFiles: { type: 'number' } } }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_validators',
+      description: 'Run lint + tests after edits.',
+      parameters: { type: 'object', properties: {} }
     }
   },
   {
     type: 'function',
     function: {
       name: 'update_memory',
-      description: 'Update the persistent MEMORY.md file with new facts or project pointers',
+      description: 'Add memory pointers to MEMORY.md.',
       parameters: {
         type: 'object',
         properties: {
           pointers: {
             type: 'array',
-            description: 'Array of memory entries to add',
             items: {
               type: 'object',
-              properties: {
-                category: { type: 'string', enum: ['ARCH', 'PREF', 'BUG', 'TODO', 'CONTEXT'], description: 'Category of the fact' },
-                content: { type: 'string', description: 'The factual statement (max 150 chars)' }
-              },
+              properties: { category: { type: 'string' }, content: { type: 'string' } },
               required: ['category', 'content']
             }
           }
@@ -123,31 +116,18 @@ export const TOOLS = [
   }
 ];
 
-export async function executeTool(name, args) {
-  // Validate required params per tool
-  const required = {
-    read_file: ['path'],
-    write_file: ['path', 'content'],
-    str_replace_editor: ['file_path', 'old_str', 'new_str'],
-    bash_execute: ['command'],
-    list_files: [],
-    web_search: ['query'],
-    update_memory: ['pointers']
-  };
-
-  const missing = (required[name] || []).filter(p => !args?.[p]);
-  if (missing.length > 0) {
-    return `Error: Tool "${name}" called with missing required parameters: ${missing.join(', ')}. The AI must provide these parameters.`;
-  }
-
+export async function executeTool(name, args = {}) {
   switch (name) {
-    case 'read_file': return await read_file(args);
-    case 'write_file': return await write_file(args);
-    case 'str_replace_editor': return await str_replace_editor(args);
-    case 'bash_execute': return await bash_execute(args);
-    case 'web_search': return await web_search(args);
-    case 'list_files': return await list_files(args);
-    case 'update_memory': return await updateMemory(args.pointers);
+    case 'read_file': return read_file(args);
+    case 'write_file': return write_file(args);
+    case 'str_replace_editor': return str_replace_editor(args);
+    case 'edit_file': return edit_file(args);
+    case 'bash_execute': return bash_execute(args);
+    case 'web_search': return web_search(args);
+    case 'list_files': return list_files(args);
+    case 'repo_map': return build_repo_map(args);
+    case 'run_validators': return run_validators();
+    case 'update_memory': return updateMemory(args.pointers || []);
     default: throw new Error(`Unknown tool: ${name}`);
   }
 }
