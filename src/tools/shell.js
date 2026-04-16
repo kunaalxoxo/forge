@@ -1,52 +1,36 @@
-import { exec, spawn } from 'child_process';
-import { colors } from '../ui/colors.js';
-import { getConfig } from '../config.js';
+import { spawn } from 'child_process';
 import readline from 'readline/promises';
+import { getConfig } from '../config.js';
 
-export async function bash_execute({ command, description }) {
-  console.log(`${colors.tool('⚡ Shell:')} ${colors.bold(command)}`);
-  if (description) console.log(`${colors.dim(description)}`);
-
+export async function bash_execute({ command, description = '' }) {
   const config = getConfig();
   if (config.approveShell) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const answer = await rl.question(colors.prompt('Run? (y/n) '));
+    const answer = await rl.question(`Run shell command? ${command}\n${description}\n[y/N]: `);
     rl.close();
-    if (answer.toLowerCase() !== 'y') {
-      return 'Command cancelled by user.';
-    }
+    if (answer.trim().toLowerCase() !== 'y') return { approved: false, stdout: '', stderr: 'Cancelled', exitCode: 130 };
   }
 
   const isWin = process.platform === 'win32';
-  const fullCommand = isWin ? `cmd /c ${command}` : command;
+  const child = isWin
+    ? spawn('cmd', ['/c', command], { stdio: ['ignore', 'pipe', 'pipe'] })
+    : spawn('bash', ['-lc', command], { stdio: ['ignore', 'pipe', 'pipe'] });
 
-  return new Promise((resolve) => {
-    let stdout = '';
-    let stderr = '';
-    
-    // Using spawn to stream results
-    const child = isWin 
-      ? spawn('cmd', ['/c', command]) 
-      : spawn('bash', ['-c', command]);
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (d) => { stdout += d.toString(); process.stdout.write(d); });
+  child.stderr.on('data', (d) => { stderr += d.toString(); process.stderr.write(d); });
 
-    child.stdout.on('data', (data) => {
-      process.stdout.write(data);
-      stdout += data.toString();
-    });
-
-    child.stderr.on('data', (data) => {
-      process.stderr.write(data);
-      stderr += data.toString();
-    });
-
-    child.on('close', (code) => {
-      resolve({ stdout, stderr, exitCode: code });
-    });
-
-    // 30s timeout
-    setTimeout(() => {
+  const exitCode = await new Promise((resolve) => {
+    const timer = setTimeout(() => {
       child.kill();
-      resolve({ stdout, stderr, exitCode: 1, error: 'Timeout' });
-    }, 30000);
+      resolve(124);
+    }, 120000);
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve(code ?? 1);
+    });
   });
+
+  return { approved: true, stdout, stderr, exitCode };
 }

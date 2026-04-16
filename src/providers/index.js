@@ -2,69 +2,57 @@ import { callGroq } from './groq.js';
 import { callOpenRouter } from './openrouter.js';
 import { callTogether } from './together.js';
 import { callMistral } from './mistral.js';
-import { getConfig, getApiKey, setConfig } from '../config.js';
-import { colors } from '../ui/colors.js';
+import { callOllama } from './ollama.js';
+import { getConfig, getApiKey, setActiveProvider } from '../config.js';
 
-const PROVIDERS = {
+const REGISTRY = {
   groq: callGroq,
   openrouter: callOpenRouter,
   together: callTogether,
-  mistral: callMistral
+  mistral: callMistral,
+  ollama: callOllama
 };
 
-const FALLBACK_ORDER = ['groq', 'openrouter', 'together', 'mistral'];
-const TOKEN_LIMITS = {
-  groq: 8000,
-  openrouter: 4000,
-  together: 4000,
-  mistral: 8000
-};
+const FALLBACK_ORDER = ['groq', 'openrouter', 'together', 'mistral', 'ollama'];
 
-let lastSuccessfulProvider = null;
+let lastProvider = null;
 
-export async function callProvider(messages, tools, onChunk, options) {
+export function listProviders() {
+  return Object.keys(REGISTRY);
+}
+
+export function getProviderStatus() {
   const config = getConfig();
-  const startProvider = lastSuccessfulProvider || config.provider;
-  const startIndex = FALLBACK_ORDER.includes(startProvider) ? FALLBACK_ORDER.indexOf(startProvider) : 0;
-  
-  const providersToTry = [
-    startProvider,
-    ...FALLBACK_ORDER.slice(startIndex + 1),
-    ...FALLBACK_ORDER.slice(0, startIndex)
-  ].filter((p, i, self) => self && self.indexOf(p) === i);
+  return FALLBACK_ORDER.map((name) => ({
+    name,
+    active: config.provider === name,
+    hasKey: name === 'ollama' ? true : Boolean(getApiKey(name)),
+    model: config.providers?.[name]?.model || ''
+  }));
+}
 
-  // Estimate tokens (chars / 4)
-  const totalChars = JSON.stringify(messages).length + JSON.stringify(tools || []).length;
-  const estimatedTokens = Math.ceil(totalChars / 4);
+export async function callProvider(messages, tools = [], onChunk, options = {}) {
+  const config = getConfig();
+  const primary = config.offline ? 'ollama' : (lastProvider || config.provider || 'groq');
+  const order = [primary, ...FALLBACK_ORDER.filter((p) => p !== primary)];
+  const maxTokens = config.tokenBudget || 4000;
 
-  for (const providerName of providersToTry) {
-    const apiKey = getApiKey(providerName);
-    if (!apiKey) continue;
+  let lastError = null;
 
-    // Skip if request is too large for this provider
-    if (estimatedTokens > (TOKEN_LIMITS[providerName] || 4000)) {
-      console.warn(colors.error(`\n[${providerName}] request too large (~${estimatedTokens} tokens). Skipping...`));
-      continue;
-    }
-
-    const fn = PROVIDERS[providerName];
-    const model = config.providers[providerName]?.model;
+  for (const name of order) {
+    if (!REGISTRY[name]) continue;
+    if (name !== 'ollama' && !getApiKey(name)) continue;
 
     try {
-      const result = await fn(messages, tools, onChunk, apiKey, model, options);
-      lastSuccessfulProvider = providerName;
-      return result;
+      const model = config.providers?.[name]?.model;
+      const result = await REGISTRY[name](messages, tools, onChunk, getApiKey(name), model, { ...options, maxTokens });
+      lastProvider = name;
+      if (config.provider !== name && !config.offline) setActiveProvider(name);
+      return { ...result, provider: name };
     } catch (error) {
-      console.warn(colors.error(`\n[${providerName}] error: ${error.message}. Trying fallback...`));
+      lastError = error;
     }
   }
 
-  throw new Error('All providers failed, request too large for all, or no API keys configured.');
+  throw lastError || new Error('No provider available. Configure API keys or run /offline for Ollama.');
 }
-
-export const listProviders = () => Object.keys(PROVIDERS);
-export const setActiveProvider = (name) => setConfig('provider', name);
-export const getActiveModel = () => {
-  const config = getConfig();
-  return config.providers[config.provider].model;
-};

@@ -1,164 +1,120 @@
+import simpleGit from 'simple-git';
 import { callProvider } from './providers/index.js';
 import { TOOLS, executeTool } from './tools/index.js';
-import { formatForPrompt, appendMemory } from './memory/index.js';
-import { loadContext } from './memory/context.js';
-import { spinner } from './ui/spinner.js';
-import { colors } from './ui/colors.js';
+import { build_repo_map } from './tools/repomap.js';
+import { run_validators } from './tools/validator.js';
+import { formatForPrompt } from './memory/index.js';
+import { loadContextHierarchy } from './memory/context.js';
+import { getConfig } from './config.js';
+import { createCheckpoint } from './session/index.js';
 
-const BASE_SYSTEM_PROMPT = `You are Forge, an expert AI coding agent.
+const SYSTEM_PROMPT = `You are Forge, an expert AI coding agent running in the terminal.
+You have tools: read_file, write_file, str_replace_editor, edit_file, bash_execute, web_search, update_memory, list_files, repo_map, run_validators.
+Always prefer str_replace_editor over write_file when modifying existing files.
+Read relevant files before making changes.
+Treat MEMORY.md entries as hints and verify against files.
+When using bash_execute, show the command and ask approval before running.
+Keep responses concise. Use markdown only for code blocks.`;
 
-## CRITICAL RULES — follow these on every single response:
-1. ONLY perform actions the user explicitly asked for. Never make unrequested changes to files.
-2. If asked to READ a file and report something, call read_file then answer in text. Do NOT call write_file or str_replace_editor unless the user asked you to change something.
-3. Before calling write_file or str_replace_editor, state what you are about to change and why. If it was not requested, don't do it.
-4. Never "improve", "fix", "update" or "refactor" anything that wasn't explicitly requested.
+function trimHistory(history, config) {
+  const turns = config.studentMode ? Math.max(2, config.maxHistoryTurns || 3) : 10;
+  const nonSystem = history.filter((m) => m.role !== 'system');
+  return nonSystem.slice(-turns * 2);
+}
 
-## Available tools:
-- read_file: Read file contents
-- write_file: Create new files only
-- str_replace_editor: Edit existing files (surgical replacement)
-- bash_execute: Run shell commands (asks approval first)
-- list_files: List directory contents
-- web_search: Search the web
-- update_memory: Save facts to MEMORY.md
+function collectEditedFiles(toolName, args, set) {
+  if (!['write_file', 'str_replace_editor', 'edit_file'].includes(toolName)) return;
+  const filePath = args.path || args.file_path;
+  if (filePath) set.add(filePath);
+}
 
-## Response style:
-- Be concise. Answer the question directly after using tools.
-- Show tool results inline, not as code blocks.
-- Never explain what you're about to do — just do it.`;
+async function autoCommit(files, userMessage) {
+  if (!files.size) return null;
+  const git = simpleGit(process.cwd());
+  const status = await git.status();
+  if (!status.files.length) return null;
+  await git.add(['-A']);
+  const subject = (userMessage || 'apply requested edits').slice(0, 64).replace(/\s+/g, ' ');
+  const msg = `forge: ${subject}`;
+  await git.commit(msg);
+  return msg;
+}
 
-export async function buildSystemPrompt() {
+export async function* runAgent(userMessage, history, options = {}) {
+  const config = getConfig();
   const memory = await formatForPrompt();
-  const context = await loadContext();
-  
-  return `${BASE_SYSTEM_PROMPT}
+  const context = await loadContextHierarchy();
+  const repoMap = config.studentMode ? '' : JSON.stringify(await build_repo_map({ includeSignatures: true, maxFiles: 80 }));
 
-[MEMORY]
-${memory}
+  if (userMessage) history.push({ role: 'user', content: userMessage });
 
-[CONTEXT]
-${context}`;
-}
-
-function trimHistoryForAPI(messages, maxMessages = 4) {
-  const systemMessages = messages.filter(m => m.role === 'system');
-  const nonSystem = messages.filter(m => m.role !== 'system');
-  const recent = nonSystem.slice(-maxMessages);
-  const combined = [...systemMessages, ...recent];
-  
-  // Estimate tokens (chars / 4)
-  const charCount = JSON.stringify(combined).length;
-  if (charCount / 4 > 8000) {
-    process.stdout.write(colors.dim('\n⚠ Large context, using recent history only\n'));
-  }
-  
-  return combined;
-}
-
-function truncateToolResult(result, maxChars = 2000) {
-  if (typeof result === 'string' && result.length > maxChars) {
-    return result.slice(0, maxChars) + '\n... [truncated, ' + result.length + ' total chars]';
-  }
-  return result;
-}
-
-export async function* runAgent(userMessage, conversationHistory, options = {}) {
-  const { planMode = false } = options;
-  
-  if (userMessage) {
-    conversationHistory.push({ role: 'user', content: userMessage });
-  }
-
-  const systemPrompt = await buildSystemPrompt();
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    ...conversationHistory
+  const editedFiles = new Set();
+  const working = [
+    { role: 'system', content: `${SYSTEM_PROMPT}\n\n[MEMORY]\n${memory}\n\n[CONTEXT]\n${context || 'None'}\n\n[REPO_MAP]\n${repoMap || 'disabled in student mode'}` },
+    ...trimHistory(history, config)
   ];
 
-  let turnCount = 0;
-  const maxTurns = 10;
-  let fileChangesMade = false;
+  const maxLoops = 10;
+  for (let loop = 0; loop < maxLoops; loop++) {
+    const providerResult = await callProvider(
+      working,
+      options.planMode ? [] : TOOLS,
+      () => {},
+      { stream: true }
+    );
 
-  while (turnCount < maxTurns) {
-    turnCount++;
-    
-    let currentContent = '';
-    const lastMessage = messages[messages.length - 1];
-    const providerOptions = { stream: true };
-    if (lastMessage && lastMessage.role === 'tool') {
-      providerOptions.stream = false;
+    if (providerResult.content) {
+      yield { type: 'text', content: providerResult.content };
+      working.push({ role: 'assistant', content: providerResult.content });
+      history.push({ role: 'assistant', content: providerResult.content });
     }
 
-    const trimmedMessages = trimHistoryForAPI(messages);
+    const toolCalls = providerResult.toolCalls || [];
+    if (!toolCalls.length) break;
 
-    const result = await callProvider(trimmedMessages, planMode ? [] : TOOLS, (chunk) => {
-      currentContent += chunk;
-    }, providerOptions);
-
-    if (!result.toolCalls?.length && !result.content) {
-      spinner.fail('No response received from AI. Try again.');
-      break;
-    }
-
-    if (result.content) {
-      yield { type: 'text', content: result.content };
-    }
-    
-    const assistantMessage = { 
-      role: 'assistant', 
-      content: result.content || '',
-      tool_calls: result.toolCalls?.length ? result.toolCalls.map(tc => ({
-        id: tc.id,
+    const assistantWithTools = {
+      role: 'assistant',
+      content: providerResult.content || '',
+      tool_calls: toolCalls.map((tc) => ({
+        id: tc.id || `call_${Date.now()}`,
         type: 'function',
-        function: {
-          name: tc.name || tc.function?.name,
-          arguments: tc.args ? JSON.stringify(tc.args) : tc.function?.arguments
-        }
-      })) : undefined
+        function: { name: tc.name, arguments: JSON.stringify(tc.args || {}) }
+      }))
     };
-    
-    conversationHistory.push(assistantMessage);
-    messages.push(assistantMessage);
+    working.push(assistantWithTools);
+    history.push(assistantWithTools);
 
-    if (!result.toolCalls?.length) break;
-
-    for (const toolCall of result.toolCalls) {
-      const name = toolCall.name || toolCall.function?.name;
-      const args = toolCall.args || (toolCall.function?.arguments ? JSON.parse(toolCall.function.arguments) : {});
-
+    for (const tc of toolCalls) {
+      const name = tc.name || tc.function?.name;
+      const args = tc.args || {};
       yield { type: 'tool', name, args };
-      
+      let result;
       try {
-        const toolResult = await executeTool(name, args);
-        if (['write_file', 'str_replace_editor', 'bash_execute'].includes(name)) {
-          fileChangesMade = true;
-        }
-
-        const truncatedResult = truncateToolResult(toolResult);
-
-        const toolResultMessage = {
-          role: 'tool',
-          tool_call_id: toolCall.id,
-          name,
-          content: typeof truncatedResult === 'string' ? truncatedResult : JSON.stringify(truncatedResult)
-        };
-        
-        conversationHistory.push(toolResultMessage);
-        messages.push(toolResultMessage);
-        yield { type: 'tool_result', name, result: truncatedResult };
+        result = await executeTool(name, args);
+        collectEditedFiles(name, args, editedFiles);
       } catch (error) {
-        const errorMessage = {
-          role: 'tool',
-          tool_call_id: toolCall.id,
-          name,
-          content: `Error: ${error.message}`
-        };
-        conversationHistory.push(errorMessage);
-        messages.push(errorMessage);
-        yield { type: 'tool_result', name, result: `Error: ${error.message}` };
+        result = `Error: ${error.message}`;
       }
+
+      const toolMessage = {
+        role: 'tool',
+        tool_call_id: tc.id || `call_${Date.now()}`,
+        name,
+        content: typeof result === 'string' ? result : JSON.stringify(result)
+      };
+      working.push(toolMessage);
+      history.push(toolMessage);
+      yield { type: 'tool_result', name, result };
     }
   }
 
+  if (editedFiles.size && !options.planMode) {
+    const checks = await run_validators();
+    if (checks.length) yield { type: 'validation', result: checks };
+    const commitMsg = await autoCommit(editedFiles, userMessage);
+    if (commitMsg) yield { type: 'git_commit', message: commitMsg };
+  }
+
+  await createCheckpoint(history);
   yield { type: 'done' };
 }

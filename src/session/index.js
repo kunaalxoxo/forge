@@ -3,56 +3,69 @@ import path from 'path';
 import os from 'os';
 
 const SESSION_DIR = path.join(os.homedir(), '.forge', 'sessions');
+const ACTIVE_FILE = path.join(SESSION_DIR, 'active.json');
+const CHECKPOINT_DIR = path.join(SESSION_DIR, 'checkpoints');
+
+async function ensureDirs() {
+  await fs.mkdir(SESSION_DIR, { recursive: true });
+  await fs.mkdir(CHECKPOINT_DIR, { recursive: true });
+}
+
+function makeId() {
+  return `${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 export async function saveSession(messages, metadata = {}) {
-  await fs.mkdir(SESSION_DIR, { recursive: true });
-  const filename = `${new Date().toISOString().replace(/:/g, '-')}.json`;
-  const filePath = path.join(SESSION_DIR, filename);
-  
-  const sessionData = {
-    timestamp: new Date().toISOString(),
-    messages,
-    metadata
-  };
+  await ensureDirs();
+  const id = makeId();
+  const payload = { id, timestamp: new Date().toISOString(), messages, metadata };
+  await fs.writeFile(path.join(SESSION_DIR, `${id}.json`), JSON.stringify(payload, null, 2), 'utf8');
+  await fs.writeFile(ACTIVE_FILE, JSON.stringify(payload, null, 2), 'utf8');
+  await createCheckpoint(messages);
+  return id;
+}
 
-  await fs.writeFile(filePath, JSON.stringify(sessionData, null, 2), 'utf-8');
-  return filename;
+export async function createCheckpoint(messages) {
+  await ensureDirs();
+  const id = makeId();
+  const checkpoint = { id, timestamp: new Date().toISOString(), messages };
+  await fs.writeFile(path.join(CHECKPOINT_DIR, `${id}.json`), JSON.stringify(checkpoint, null, 2), 'utf8');
+  return id;
 }
 
 export async function listSessions() {
-  try {
-    const files = await fs.readdir(SESSION_DIR);
-    const sessions = await Promise.all(
-      files.filter(f => f.endsWith('.json')).map(async (file) => {
-        const content = await fs.readFile(path.join(SESSION_DIR, file), 'utf-8');
-        const data = JSON.parse(content);
-        return {
-          id: file.replace('.json', ''),
-          timestamp: data.timestamp,
-          messagesCount: data.messages.length
-        };
-      })
-    );
-    return sessions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).slice(0, 10);
-  } catch (e) {
-    return [];
+  await ensureDirs();
+  const files = (await fs.readdir(SESSION_DIR)).filter((f) => f.endsWith('.json') && f !== 'active.json');
+  const sessions = [];
+  for (const file of files) {
+    try {
+      const data = JSON.parse(await fs.readFile(path.join(SESSION_DIR, file), 'utf8'));
+      sessions.push({ id: data.id, timestamp: data.timestamp, turns: data.messages?.filter((m) => m.role === 'user').length || 0 });
+    } catch {
+      // ignore bad session files
+    }
   }
+  return sessions.sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 20);
 }
 
 export async function loadSession(id) {
-  const filePath = path.join(SESSION_DIR, `${id}.json`);
-  const content = await fs.readFile(filePath, 'utf-8');
-  return JSON.parse(content);
+  const file = path.join(SESSION_DIR, `${id}.json`);
+  const data = JSON.parse(await fs.readFile(file, 'utf8'));
+  await fs.writeFile(ACTIVE_FILE, JSON.stringify(data, null, 2), 'utf8');
+  return data;
+}
+
+export async function undoLast(messages) {
+  await ensureDirs();
+  const files = (await fs.readdir(CHECKPOINT_DIR)).filter((f) => f.endsWith('.json')).sort();
+  if (files.length < 2) return { restored: messages, note: 'No previous checkpoint.' };
+  const prevFile = files[files.length - 2];
+  const prev = JSON.parse(await fs.readFile(path.join(CHECKPOINT_DIR, prevFile), 'utf8'));
+  return { restored: prev.messages || [], note: `Restored checkpoint ${prev.id}` };
 }
 
 export function getSessionStats(messages) {
-  let turns = 0;
-  let toolCalls = 0;
-  
-  for (const m of messages) {
-    if (m.role === 'user') turns++;
-    if (m.tool_calls) toolCalls += m.tool_calls.length;
-  }
-
-  return { turns, toolCalls };
+  const turns = messages.filter((m) => m.role === 'user').length;
+  const toolCalls = messages.reduce((acc, m) => acc + (Array.isArray(m.tool_calls) ? m.tool_calls.length : 0), 0);
+  return { turns, toolCalls, costUsd: 0 };
 }
