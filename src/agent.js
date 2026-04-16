@@ -59,7 +59,7 @@ export async function* runAgent(userMessage, history, options = {}) {
     const providerResult = await callProvider(
       working,
       options.planMode ? [] : TOOLS,
-      (chunk) => { if (!options.silent) history.__stream = (history.__stream || '') + chunk; },
+      () => {},
       { stream: true }
     );
 

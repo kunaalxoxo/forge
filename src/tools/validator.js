@@ -10,7 +10,7 @@ function run(command) {
     let stderr = '';
     child.stdout.on('data', (d) => { stdout += d.toString(); });
     child.stderr.on('data', (d) => { stderr += d.toString(); });
-    child.on('close', (code) => resolve({ command, exitCode: code ?? 1, stdout, stderr }));
+    child.on('close', (code, signal) => resolve({ command, exitCode: typeof code === 'number' ? code : (signal ? 1 : 0), stdout, stderr }));
   });
 }
 

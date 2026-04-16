@@ -105,7 +105,10 @@ export const TOOLS = [
             type: 'array',
             items: {
               type: 'object',
-              properties: { category: { type: 'string' }, content: { type: 'string' } },
+              properties: {
+                category: { type: 'string', enum: ['ARCH', 'PREF', 'BUG', 'TODO', 'CONTEXT'] },
+                content: { type: 'string' }
+              },
               required: ['category', 'content']
             }
           }

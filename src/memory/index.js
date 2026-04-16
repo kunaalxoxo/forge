@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
 
 const MEM_PATH = path.resolve(process.cwd(), 'MEMORY.md');
 const RUNTIME_DIR = path.join(os.homedir(), '.forge');
@@ -81,7 +82,8 @@ export async function startDaemon() {
   const status = await daemonStatus();
   if (status.running) return `Daemon already running (${status.pid})`;
 
-  const cliPath = path.resolve(process.cwd(), 'bin/forge.js');
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const cliPath = path.resolve(moduleDir, '../../bin/forge.js');
   const child = spawn(process.execPath, [cliPath, 'daemon-run'], {
     detached: true,
     stdio: 'ignore'

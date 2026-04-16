@@ -11,9 +11,13 @@ async function ensureDirs() {
   await fs.mkdir(CHECKPOINT_DIR, { recursive: true });
 }
 
+function makeId() {
+  return `${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export async function saveSession(messages, metadata = {}) {
   await ensureDirs();
-  const id = new Date().toISOString().replace(/[:.]/g, '-');
+  const id = makeId();
   const payload = { id, timestamp: new Date().toISOString(), messages, metadata };
   await fs.writeFile(path.join(SESSION_DIR, `${id}.json`), JSON.stringify(payload, null, 2), 'utf8');
   await fs.writeFile(ACTIVE_FILE, JSON.stringify(payload, null, 2), 'utf8');
@@ -23,7 +27,7 @@ export async function saveSession(messages, metadata = {}) {
 
 export async function createCheckpoint(messages) {
   await ensureDirs();
-  const id = new Date().toISOString().replace(/[:.]/g, '-');
+  const id = makeId();
   const checkpoint = { id, timestamp: new Date().toISOString(), messages };
   await fs.writeFile(path.join(CHECKPOINT_DIR, `${id}.json`), JSON.stringify(checkpoint, null, 2), 'utf8');
   return id;
